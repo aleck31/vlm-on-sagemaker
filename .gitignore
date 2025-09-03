@@ -1,0 +1,6 @@
+.vscode/
+.ipynb_checkpoints
+.withdraw
+__pycache__/
+lmi_config/
+*.tar.gz
