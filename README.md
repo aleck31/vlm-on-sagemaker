@@ -87,6 +87,42 @@ scaling_config = {
 - **ModelLatency**: 模型推理延迟
 - **InvocationsPerInstance**: 每实例调用数
 
+## 模型准备
+
+### 下载模型存储到S3
+使用提供的下载脚本将模型从Hugging Face下载并上传到S3 (推荐使用S3 Express存储类)：
+
+```bash
+# 下载Qwen2.5-VL-7B模型
+python download_model.py \
+  --model qwen2.5-vl-7b \
+  --s3-bucket your-express-bucket--region-az-id--x-s3 \
+  --region us-west-2
+
+# 支持的模型
+# qwen2.5-vl-3b   - Qwen/Qwen2.5-VL-3B-Instruct
+# qwen2.5-vl-7b   - Qwen/Qwen2.5-VL-7B-Instruct  
+# qwen2.5-vl-72b  - Qwen/Qwen2.5-VL-72B-Instruct
+```
+
+**重要提示**:
+- 模型会先下载到本地 `./models/` 目录，然后上传到S3
+- 推荐使用S3 Express存储桶提升模型加载性能
+- S3 Express存储桶和SageMaker端点必须在同一可用区
+
+下载完成后，在notebook中使用输出的S3路径：
+```python
+MODEL_S3_PATH = "s3://your-express-bucket--region-az-id--x-s3/models/qwen2.5-vl-7b/"
+```
+
+### S3 Express One Zone 说明
+
+Amazon S3 Express One Zone 是高性能的专用单可用区存储类，可为延迟敏感型应用提供稳定的毫秒级数据访问性能。
+使用S3 Express存储桶带来的**性能优势**:
+- 提升模型下载速度
+- 减少端点启动时间
+- 适合大模型部署场景
+
 ## 部署步骤
 
 ### 执行环境
@@ -96,7 +132,7 @@ scaling_config = {
 ### 部署选项
 
 #### 1. 标准部署 (快速开始)
-使用提供的Jupyter Notebook进行一键部署：
+使用提供的Jupyter Notebook进行部署：
 
 ```bash
 # 在SageMaker Studio/Notebook中打开
@@ -111,7 +147,7 @@ vlm_deploy_sagemaker.ipynb
 vlm_deploy_sagemaker_vpc.ipynb
 ```
 
-### Notebook功能对比
+### 部署方案功能对比
 
 | 功能 | 标准部署 | VPC部署 |
 |------|----------|---------|
@@ -221,7 +257,7 @@ alerts = {
 ## 安全配置
 
 ### 网络安全
-- **VPC**: 部署在私有VPC中
+- **VPC**: 支持部署在私有VPC中
 - **安全组**: 仅允许必要端口访问
 - **NAT Gateway**: 安全的外网访问
 
@@ -252,19 +288,6 @@ alerts = {
 - [ ] 测试自动扩缩容策略
 - [ ] 验证推理调用和性能指标
 
-## S3 Express存储桶配置
-
-### 命名格式
-```bash
-# S3 Express存储桶命名格式
-bucket-name--region-az-id--x-s3
-# 示例: my-models--us-west-2-az1--x-s3
-```
-
-### 性能优势
-- 提升模型下载速度
-- 减少端点启动时间
-- 适合大模型部署场景
 
 ## 下一步
 

@@ -4,3 +4,4 @@
 __pycache__/
 lmi_config/
 *.tar.gz
+models/
