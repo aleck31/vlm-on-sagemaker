@@ -5,10 +5,8 @@ VLM模型下载脚本 - 从Hugging Face下载模型并上传到S3
 
 import os
 import argparse
-import boto3
 import shutil
-from transformers import AutoModel, AutoProcessor, AutoTokenizer
-import torch
+from huggingface_hub import snapshot_download
 
 # 支持的模型配置
 SUPPORTED_MODELS = {
@@ -18,59 +16,100 @@ SUPPORTED_MODELS = {
 }
 
 def download_model(model_id, local_path):
-    """从Hugging Face下载模型"""
+    """从Hugging Face下载模型文件"""
     print(f"📥 下载模型: {model_id}")
     print(f"📁 本地保存: {local_path}")
     
+    # 设置镜像源
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    
     os.makedirs(local_path, exist_ok=True)
     
-    # 下载模型、处理器和分词器
-    model = AutoModel.from_pretrained(model_id, torch_dtype=torch.float16, trust_remote_code=True)
-    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    
-    # 保存到本地
-    model.save_pretrained(local_path)
-    processor.save_pretrained(local_path)
-    tokenizer.save_pretrained(local_path)
-    
-    print(f"✅ 下载完成: {local_path}")
+    # 重试机制
+    import time
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            snapshot_download(
+                repo_id=model_id,
+                local_dir=local_path,
+                max_workers=5,  # 多线程下载 (1线程=1文件)
+            )
+            print(f"✅ 下载完成: {local_path}")
+            return
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"⚠️ 下载失败，5秒后重试 ({attempt+1}/{max_retries}): {str(e)[:100]}")
+                time.sleep(5)
+            else:
+                raise e
 
 def upload_to_s3(local_path, s3_bucket, s3_prefix, region):
-    """上传模型到S3"""
-    print(f"📤 上传到S3: s3://{s3_bucket}/{s3_prefix}")
+    """上传模型到S3 - 只上传SageMaker部署必需文件"""
+    s3_path = f"s3://{s3_bucket}/{s3_prefix.rstrip('/')}"
+    print(f"📤 上传到S3: {s3_path}")
     
-    # 检查是否为S3 Express存储桶
-    if "--x-s3" in s3_bucket:
-        print("🚀 检测到S3 Express存储桶，将获得更快的加载性能")
-        print("⚠️  请确保SageMaker端点部署在相同可用区")
+    # SageMaker部署必需文件
+    essential_files = [
+        "config.json",
+        "tokenizer.json", 
+        "tokenizer_config.json",
+        "generation_config.json",
+        "preprocessor_config.json"  # VLM模型必需
+    ]
     
-    s3_client = boto3.client('s3', region_name=region)
+    # 查找safetensors文件
+    import glob
+    safetensors_files = glob.glob(os.path.join(local_path, "*.safetensors"))
+    index_files = glob.glob(os.path.join(local_path, "*.index.json"))
     
-    # 统计文件数量
-    file_count = sum(len(files) for _, _, files in os.walk(local_path))
-    print(f"📋 准备上传 {file_count} 个文件...")
+    # 统计要上传的文件
+    upload_files = []
+    for file in essential_files:
+        file_path = os.path.join(local_path, file)
+        if os.path.exists(file_path):
+            upload_files.append(file)
     
-    # 上传所有文件
-    uploaded = 0
-    for root, dirs, files in os.walk(local_path):
-        for file in files:
-            local_file = os.path.join(root, file)
-            relative_path = os.path.relpath(local_file, local_path)
-            s3_key = f"{s3_prefix.rstrip('/')}/{relative_path}"
-            s3_client.upload_file(local_file, s3_bucket, s3_key)
-            uploaded += 1
-            if uploaded % 10 == 0:
-                print(f"  已上传 {uploaded}/{file_count} 个文件...")
+    # 添加safetensors和index文件
+    for file_path in safetensors_files + index_files:
+        upload_files.append(os.path.basename(file_path))
     
-    s3_path = f"s3://{s3_bucket}/{s3_prefix}"
-    print(f"✅ 上传完成: {s3_path}")
-    return s3_path
+    print(f"📋 上传文件: {len(upload_files)} 个")
+
+    # 逐个上传文件
+    import subprocess
+    success_count = 0
+    for i, file in enumerate(upload_files, 1):
+        local_file = os.path.join(local_path, file)
+        s3_file = f"{s3_path}/{file}"
+        
+        # 获取文件大小
+        file_size = os.path.getsize(local_file)
+        size_mb = file_size / (1024 * 1024)
+        
+        print(f"  - [{i}/{len(upload_files)}] 上传 {file} ({size_mb:.1f}MB)...")
+        
+        result = subprocess.run([
+            "aws", "s3", "cp", local_file, s3_file,
+            "--region", region
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            success_count += 1
+            print(f"  ✅ 完成")
+        else:
+            print(f"  ❌ 失败: {result.stderr}")
+    
+    if success_count == len(upload_files):
+        print(f"✅ 上传完成: {s3_path} ({success_count}个文件)")
+        return s3_path
+    else:
+        raise Exception(f"部分文件上传失败: {success_count}/{len(upload_files)}")
 
 def main():
     parser = argparse.ArgumentParser(description="下载VLM模型并上传到S3")
     parser.add_argument("--model", required=True, choices=list(SUPPORTED_MODELS.keys()), help="模型名称")
-    parser.add_argument("--s3-bucket", required=True, help="S3存储桶名称 (推荐S3 Express)")
+    parser.add_argument("--s3-bucket", required=True, help="S3存储桶名称")
     parser.add_argument("--region", default="us-west-2", help="AWS区域")
     parser.add_argument("--keep-local", action="store_true", help="保留本地文件")
     
@@ -99,20 +138,13 @@ def main():
             shutil.rmtree(local_path)
             print("✅ 本地文件已清理")
         else:
-            print(f"📁 本地文件保留在: {local_path}")
+            print(f"📁 模型文件保留在: {local_path}")
         
         # 4. 输出结果
         print("\n" + "=" * 60)
         print("🎉 模型下载和上传完成!")
-        print(f"📍 S3路径: {s3_path}")
         print("\n📝 在notebook中使用:")
         print(f'MODEL_S3_PATH = "{s3_path}"')
-        
-        if "--x-s3" in args.s3_bucket:
-            print("\n💡 S3 Express提示:")
-            print("   - 确保SageMaker端点在相同可用区部署")
-            print("   - 享受更快的模型加载速度")
-        
         print("=" * 60)
         
     except Exception as e:

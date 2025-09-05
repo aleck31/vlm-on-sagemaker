@@ -87,16 +87,45 @@ scaling_config = {
 - **ModelLatency**: 模型推理延迟
 - **InvocationsPerInstance**: 每实例调用数
 
-## 模型准备
+## 部署步骤
 
-### 下载模型存储到S3
-使用提供的下载脚本将模型从Hugging Face下载并上传到S3 (推荐使用S3 Express存储类)：
+### 执行环境
+**推荐**: SageMaker Studio (预配置AWS凭证和权限)
+**备选**: SageMaker Notebook Instance
+
+### 获取代码
+```bash
+# 克隆项目代码
+git clone https://github.com/aleck31/vlm-on-sagemaker.git
+cd vlm-on-sagemaker
+```
+
+### 模型准备
+
+#### 1: 微调模型上传到S3
+如果你已有微调好的VLM模型，直接上传到S3：
+
+```bash
+# 上传本地模型到S3
+aws s3 sync ./your-model-directory/ s3://your-bucket/models/your-model-name/ --region your-region
+
+# 确保包含必要文件
+# ✅ config.json
+# ✅ tokenizer.json, tokenizer_config.json  
+# ✅ preprocessor_config.json (VLM必需)
+# ✅ generation_config.json
+# ✅ model-*.safetensors 文件
+# ✅ model.safetensors.index.json
+```
+
+#### 2: 下载开源模型到S3
+使用提供的下载脚本从Hugging Face下载开源模型并上传到S3：
 
 ```bash
 # 下载Qwen2.5-VL-7B模型
 python download_model.py \
   --model qwen2.5-vl-7b \
-  --s3-bucket your-express-bucket--region-az-id--x-s3 \
+  --s3-bucket your-bucket-name \
   --region us-west-2
 
 # 支持的模型
@@ -105,29 +134,14 @@ python download_model.py \
 # qwen2.5-vl-72b  - Qwen/Qwen2.5-VL-72B-Instruct
 ```
 
-**重要提示**:
-- 模型会先下载到本地 `./models/` 目录，然后上传到S3
-- 推荐使用S3 Express存储桶提升模型加载性能
-- S3 Express存储桶和SageMaker端点必须在同一可用区
-
 下载完成后，在notebook中使用输出的S3路径：
 ```python
-MODEL_S3_PATH = "s3://your-express-bucket--region-az-id--x-s3/models/qwen2.5-vl-7b/"
+MODEL_S3_PATH = "s3://your-bucket-name/models/qwen2.5-vl-7b/"
 ```
 
-### S3 Express One Zone 说明
-
-Amazon S3 Express One Zone 是高性能的专用单可用区存储类，可为延迟敏感型应用提供稳定的毫秒级数据访问性能。
-使用S3 Express存储桶带来的**性能优势**:
-- 提升模型下载速度
-- 减少端点启动时间
-- 适合大模型部署场景
-
-## 部署步骤
-
-### 执行环境
-**推荐**: SageMaker Studio (预配置AWS凭证和权限)
-**备选**: SageMaker Notebook Instance
+**提示信息**:
+- 模型会先下载到本地 `./models/` 目录，然后上传到S3
+- 如需更快的模型加载性能，可考虑使用S3 Express One Zone存储类
 
 ### 部署选项
 
