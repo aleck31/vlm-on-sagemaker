@@ -110,12 +110,13 @@ cd vlm-on-sagemaker
 aws s3 sync ./your-model-directory/ s3://your-bucket/models/your-model-name/ --region your-region
 
 # 确保包含必要文件
-# ✅ config.json
-# ✅ tokenizer.json, tokenizer_config.json  
-# ✅ preprocessor_config.json (VLM必需)
-# ✅ generation_config.json
-# ✅ model-*.safetensors 文件
-# ✅ model.safetensors.index.json
+ ✅ config.json                 #模型配置
+ ✅ tokenizer.json              #分词器
+ ✅ tokenizer_config.json       #分词器配置
+ ✅ preprocessor_config.json    #预处理配置 (VLM必需)
+ ✅ generation_config.json      #生成配置
+ ✅ model-*.safetensors 文件     #模型权重文件
+ ✅ model.safetensors.index.json   # 重索引文件
 ```
 
 #### 2: 下载开源模型到S3
@@ -161,6 +162,8 @@ vlm_deploy_sagemaker.ipynb
 vlm_deploy_sagemaker_vpc.ipynb
 ```
 
+**提示**: 参考 [VPC网络配置](#vpc网络配置) 章节配置VPC、子网和安全组。
+
 ### 部署方案功能对比
 
 | 功能 | 标准部署 | VPC部署 |
@@ -203,6 +206,12 @@ VPC_SECURITY_GROUP_IDS = ['sg-xxxxxxxxx']
 VPC_SUBNET_IDS = ['subnet-xxxxxxxx', 'subnet-yyyyyyyy']
 ```
 
+### 推理参数配置(L40S GPU优化)
+- **批处理大小**: 推荐max_rolling_batch_size=32-64
+- **数据类型**: 使用fp16平衡性能和精度
+- **量化**: AWQ量化可减少50%显存占用
+- **序列长度**: 根据显存动态调整max_model_len
+
 ### 部署时间
 - **标准部署**: 10-15分钟
 - **VPC部署**: 15-20分钟 (包含网络配置)
@@ -214,18 +223,45 @@ VPC_SUBNET_IDS = ['subnet-xxxxxxxx', 'subnet-yyyyyyyy']
 - 推理调用测试
 - 扩缩容策略确认
 
-## 性能优化
+## VPC网络配置
 
-### L40S GPU优化
-- **批处理大小**: 推荐max_rolling_batch_size=32-64
-- **数据类型**: 使用fp16平衡性能和精度
-- **量化**: AWQ量化可减少50%显存占用
-- **序列长度**: 根据显存动态调整max_model_len
+### 网络架构建议
 
-### 网络优化
-- **VPC端点**: 减少跨AZ网络延迟
-- **负载均衡**: 多AZ部署提高可用性
-- **CDN**: 使用CloudFront加速静态资源
+**开发测试环境:**
+- 可以共用相同子网和安全组简化配置
+
+**生产环境推荐架构:**
+```
+同一VPC，不同子网和安全组
+├── SageMaker Studio: 专用子网 + 安全组
+└── SageMaker Endpoint: 专用子网 + 安全组
+```
+
+### VPC部署要求
+
+**Public Subnet部署 (开发测试):**
+- ✅ 有Internet Gateway，可直接访问S3
+- ✅ 安全组允许HTTPS(443)出站到0.0.0.0/0
+
+**Private Subnet部署 (生产推荐):**
+- ✅ 必须配置S3 VPC端点 (Gateway类型)
+- ✅ 路由表包含S3端点路由
+- ✅ 安全组允许HTTPS(443)出站到0.0.0.0/0
+
+### 多子网配置
+- **推荐**: 至少2个子网，分布在不同AZ
+- **类型**: 相同类型子网 (都是private或都是public)
+- **用途**: 高可用性和负载分散
+
+### 安全组配置
+```python
+# Endpoint安全组入站规则
+{
+    "Type": "HTTPS",
+    "Protocol": "TCP", 
+    "Port": 443,
+    "Source": "VPC_CIDR"  # 例如: 172.31.0.0/16
+}
 
 ## 监控和告警
 
@@ -282,17 +318,34 @@ alerts = {
 
 ## 故障排除
 
-### 常见问题
+### 部署失败诊断
+```python
+# 查看详细失败原因
+endpoint_info = sm_client.describe_endpoint(EndpointName=endpoint_name)
+print(f"失败原因: {endpoint_info.get('FailureReason', '未知')}")
+```
+
+### 网络连接问题
+1. **S3访问失败**: 
+   - Private Subnet: 检查S3 VPC端点配置
+   - Public Subnet: 检查Internet Gateway和路由表
+   - 安全组: 确保允许HTTPS(443)出站
+
+2. **Studio无法访问Endpoint**:
+   - 检查安全组入站规则允许Studio访问
+   - 确认子网在同一VPC或有正确的网络路由
+
+### 其它常见问题
 1. **显存不足**: 启用AWQ量化或减少batch_size
 2. **性能不佳**: 检查tensor_parallel_degree设置
 3. **启动慢**: L40S GPU初始化时间较长，增加超时时间
 4. **网络延迟**: 使用VPC端点优化
 5. **配额限制**: 提前申请实例配额增加
+6. **模型文件问题**: 检查必需文件是否完整，特别是preprocessor_config.json
 
 ## 部署检查清单
 
-- [ ] 确认目标region配额充足 (ml.g5/g6e实例)
-- [ ] 创建S3 Express存储桶 (可选，提升性能)
+- [ ] 确认目标Region配额充足 (ml.g5/g6e实例)
 - [ ] 上传VLM模型到S3存储桶
 - [ ] 配置IAM角色和权限
 - [ ] 准备LMI配置文件 (serving.properties)
@@ -301,12 +354,3 @@ alerts = {
 - [ ] 配置CloudWatch监控
 - [ ] 测试自动扩缩容策略
 - [ ] 验证推理调用和性能指标
-
-
-## 下一步
-
-基于此文档，我们将：
-1. 下载并准备VLM模型
-2. 创建针对ml.g5/g6e实例优化的部署脚本
-3. 配置监控和告警
-4. 进行L40S GPU性能测试和优化
