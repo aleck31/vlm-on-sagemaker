@@ -225,28 +225,53 @@ VPC_SUBNET_IDS = ['subnet-xxxxxxxx', 'subnet-yyyyyyyy']
 
 ## VPC网络配置
 
+### 访问机制说明
+**SageMaker Endpoint访问路径：**
+```
+客户端 → SageMaker Runtime API → SageMaker服务 → VPC中的Endpoint
+```
+
+**重要概念：**
+- **SageMaker Domain和Endpoint无需在同一网络**：通过AWS API（runtime.sagemaker.{region}.amazonaws.com）调用，不是直接网络连接
+- **VPC配置的作用**：控制Endpoint容器访问VPC内资源（S3、CloudWatch等）
+- **负载均衡**：SageMaker自动在多个实例间分发请求，使用轮询算法
+- **外部访问**：无需为客户端IP配置安全组入站规则，通过AWS API网关路由
+
 ### 网络架构建议
 
+基于SageMaker Endpoint通过API访问的机制，网络架构重点关注**Endpoint容器的安全隔离**：
+
 **开发测试环境:**
-- 可以共用相同子网和安全组简化配置
+- **标准部署**：使用SageMaker默认网络，无需VPC配置
+- **简化VPC部署**：Endpoint使用单个私有子网 + 基础安全组
 
 **生产环境推荐架构:**
 ```
-同一VPC，不同子网和安全组
-├── SageMaker Studio: 专用子网 + 安全组
-└── SageMaker Endpoint: 专用子网 + 安全组
+专用VPC中的Endpoint部署
+├── 私有子网1 (AZ-a) + 专用安全组
+├── 私有子网2 (AZ-b) + 专用安全组  
+├── S3 VPC Endpoint (Gateway类型)
+└── CloudWatch VPC Endpoint (Interface类型，可选)
 ```
 
 ### VPC部署要求
 
-**Public Subnet部署 (开发测试):**
-- ✅ 有Internet Gateway，可直接访问S3
-- ✅ 安全组允许HTTPS(443)出站到0.0.0.0/0
-
-**Private Subnet部署 (生产推荐):**
+**Private Subnet部署:**
 - ✅ 必须配置S3 VPC端点 (Gateway类型)
 - ✅ 路由表包含S3端点路由
-- ✅ 安全组允许HTTPS(443)出站到0.0.0.0/0
+- ✅ 安全组允许HTTPS(443)出站
+
+**Public Subnet部署:**
+- ✅ 必须配置S3 VPC端点 (Gateway类型)
+- ✅ 路由表需同时包含：
+  - Internet Gateway路由：`0.0.0.0/0 -> igw-xxx`
+  - S3 VPC端点路由：`pl-xxx -> vpce-xxx`
+- ✅ 安全组允许HTTPS(443)出站
+
+**注意：**
+- SageMaker Endpoint即使部署在公共子网，也会创建**网络隔离**的容器
+- 该容器无法直接访问互联网，必须通过S3 VPC端点访问S3
+- 这是AWS安全设计，防止模型容器直接暴露到互联网
 
 ### 多子网配置
 - **推荐**: 至少2个子网，分布在不同AZ
@@ -255,13 +280,24 @@ VPC_SUBNET_IDS = ['subnet-xxxxxxxx', 'subnet-yyyyyyyy']
 
 ### 安全组配置
 ```python
-# Endpoint安全组入站规则
+# Endpoint安全组出站规则 (必需)
+{
+    "Type": "HTTPS",
+    "Protocol": "TCP",
+    "Port": 443,
+    "Destination": "0.0.0.0/0",
+    "Description": "Endpoint容器访问S3、CloudWatch等AWS服务"
+}
+
+# Endpoint安全组入站规则 (可选)
 {
     "Type": "HTTPS",
     "Protocol": "TCP", 
     "Port": 443,
-    "Source": "VPC_CIDR"  # 例如: 172.31.0.0/16
+    "Source": "VPC_CIDR",  # 例如: 10.0.0.0/16
+    "Description": "SageMaker服务访问Endpoint容器"
 }
+```
 
 ## 监控和告警
 
@@ -332,8 +368,9 @@ print(f"失败原因: {endpoint_info.get('FailureReason', '未知')}")
    - 安全组: 确保允许HTTPS(443)出站
 
 2. **Studio无法访问Endpoint**:
-   - 检查安全组入站规则允许Studio访问
-   - 确认子网在同一VPC或有正确的网络路由
+   - 检查Studio是否能访问SageMaker Runtime API
+   - 确认AWS凭证和IAM权限配置正确
+   - 验证网络连接到 `runtime.sagemaker.{region}.amazonaws.com`
 
 ### 其它常见问题
 1. **显存不足**: 启用AWQ量化或减少batch_size

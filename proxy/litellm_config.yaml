@@ -1,0 +1,18 @@
+model_list:
+  - model_name: "qwen-vlm-private"
+    litellm_params:
+      model: "sagemaker_chat/vlm-qwen2-5-vl-7b-vpc-2025-09-10-12-34-56"
+      aws_region_name: "eu-west-2"
+      temperature: 0.2
+      max_tokens: 500
+    model_info:
+      supports_vision: true
+      
+  - model_name: "qwen-vlm-public"  
+    litellm_params:
+      model: "sagemaker_chat/vlm-qwen2-5-vl-7b-pub-2025-09-10-12-34-56"
+      aws_region_name: "eu-west-2"
+      temperature: 0.2
+      max_tokens: 500
+    model_info:
+      supports_vision: true
