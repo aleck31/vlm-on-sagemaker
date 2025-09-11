@@ -4,19 +4,6 @@
 
 本目录包含LiteLLM代理服务器配置，用于将SageMaker VLM端点转换为OpenAI兼容的API。
 
-## 功能支持状态
-
-### ✅ 支持
-- **文本对话**: `sagemaker_chat/` 前缀完美支持
-- **OpenAI SDK兼容**: 完全兼容OpenAI Python SDK
-- **代理服务**: 稳定的HTTP代理服务器
-- **多端点**: 支持VPC和公网部署的端点
-
-### ❌ 限制
-- **VLM视觉功能**: `sagemaker_chat/` 前缀的VLM功能存在兼容性问题
-- **图像处理**: Qwen2.5-VL预处理器与LiteLLM格式转换不兼容
-- **多模态内容**: `sagemaker/` 前缀无法处理OpenAI多模态格式
-
 ## 文件结构
 
 ```
@@ -102,14 +89,13 @@ model_list:
 
 ### 成功案例
 - ✅ 文本对话响应正常，中英文支持良好
-- ✅ OpenAI SDK完全兼容，无需修改客户端代码
+- ✅ 完全兼容OpenAI Python SDK，无需修改客户端代码
 - ✅ 代理服务稳定，支持并发请求
 - ✅ 支持VPC和公网部署的SageMaker端点
 
 ### 失败案例
 - ❌ VLM图像识别功能无法正常工作
 - ❌ 错误信息: `RuntimeError: Failed to apply Qwen2_5_VLProcessor`
-- ❌ 问题根源: Qwen2.5-VL预处理器与LiteLLM格式转换不兼容
 
 ### 错误分析
 
@@ -121,7 +107,7 @@ RuntimeError: Failed to apply Qwen2_5_VLProcessor on data={
 } with kwargs={}
 ```
 
-**根本原因:**
+**原因分析:**
 - LiteLLM将OpenAI格式转换为SageMaker格式时，图像处理部分与Qwen2.5-VL的预处理器不兼容
 - `sagemaker_chat/` 前缀主要优化文本聊天功能
 - `sagemaker/` 前缀无法处理多模态内容（list格式）
@@ -153,28 +139,6 @@ def vision_chat(message, image_path):
 
 ## 故障排除
 
-### 常见问题
-
-1. **代理启动失败**
-   ```bash
-   # 检查端口占用
-   lsof -i :4000
-   # 重启代理
-   ./start_proxy.sh
-   ```
-
-2. **AWS认证失败**
-   ```bash
-   # 确保AWS profile配置正确
-   export AWS_PROFILE=lab
-   aws sts get-caller-identity
-   ```
-
-3. **端点连接失败**
-   - 检查端点名称是否正确
-   - 确认AWS区域设置
-   - 验证IAM权限
-
 ### 日志调试
 
 ```python
@@ -182,18 +146,6 @@ def vision_chat(message, image_path):
 import litellm
 litellm._turn_on_debug()
 ```
-
-## 未来改进
-
-### 待解决问题
-- [ ] 完善VLM功能支持
-- [ ] 优化图像格式转换
-- [ ] 支持更多VLM模型
-
-### 可能的解决方案
-- 等待LiteLLM官方更新Qwen2.5-VL支持
-- 向LiteLLM项目提交issue和PR
-- 考虑使用其他VLM模型测试兼容性
 
 ## 相关链接
 
